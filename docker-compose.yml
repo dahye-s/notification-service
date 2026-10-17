@@ -1,0 +1,95 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${DB_USER:-admin}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-noti_dev}
+      POSTGRES_DB: ${DB_NAME:-notification}
+    ports: ["5433:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-admin} -d ${DB_NAME:-notification}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6380:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  mock:
+    image: ghcr.io/us-all/backend-assignment-api:1.2
+    ports: ["4000:4000"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/health || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    environment: &app-env
+      NODE_ENV: ${NODE_ENV:-development}
+      DB_HOST: ${DB_HOST:-postgres}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_USER: ${DB_USER:-admin}
+      DB_PASSWORD: ${DB_PASSWORD:-noti_dev}
+      DB_NAME: ${DB_NAME:-notification}
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      MOCK_API_URL: ${MOCK_API_URL:-http://mock:4000}
+      RATE_LIMIT_PER_SEC: ${RATE_LIMIT_PER_SEC:-45}
+      MAX_IN_FLIGHT: ${MAX_IN_FLIGHT:-100}
+      CLAIM_BATCH_SIZE: ${CLAIM_BATCH_SIZE:-50}
+      CLAIM_LEASE_SEC: ${CLAIM_LEASE_SEC:-30}
+      POLL_INTERVAL_MS: ${POLL_INTERVAL_MS:-1000}
+      SEND_TIMEOUT_MS: ${SEND_TIMEOUT_MS:-5000}
+      LOOKUP_TIMEOUT_MS: ${LOOKUP_TIMEOUT_MS:-5000}
+      MAX_ATTEMPTS: ${MAX_ATTEMPTS:-5}
+      BACKOFF_BASE_MS: ${BACKOFF_BASE_MS:-1000}
+      BACKOFF_MAX_MS: ${BACKOFF_MAX_MS:-60000}
+      USER_PAGE_SIZE: ${USER_PAGE_SIZE:-1000}
+    command: ["npm", "run", "mig:run"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+
+  api:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      <<: *app-env
+      PORT: ${PORT:-3000}
+    ports: ["3000:3000"]
+    command: ["node", "dist/main"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+      mock:     { condition: service_healthy }
+      migrate:  { condition: service_completed_successfully }
+
+  worker:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    environment: *app-env
+    command: ["node", "dist/worker"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+      mock:     { condition: service_healthy }
+      migrate:  { condition: service_completed_successfully }
+
+volumes:
+  pgdata:
