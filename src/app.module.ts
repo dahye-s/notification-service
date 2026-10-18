@@ -1,10 +1,10 @@
+import { HealthController } from '@adapter/in/web/health.controller';
+import { AlarmModule } from '@global/module/alarm.module';
+import { DatabaseModule } from '@global/module/database.module';
 import { Module } from '@nestjs/common';
-import { AppController } from './app.controller';
-import { AppService } from './app.service';
 
 @Module({
-    imports: [],
-    controllers: [AppController],
-    providers: [AppService],
+    imports: [DatabaseModule, AlarmModule],
+    controllers: [HealthController],
 })
 export class AppModule {}
