@@ -1,9 +1,11 @@
+import { toRows } from '@adapter/out/persistence/raw-rows';
 import type { GetAlarmListCommand } from '@core/alarm/application/port/in/command/get-alarm-list.command';
 import type { GetAlarmListResult } from '@core/alarm/application/port/in/result/get-alarm-list.result';
 import type { AlarmPort } from '@core/alarm/application/port/out/alarm.port';
 import type { StatsDelta } from '@core/alarm/application/port/out/type/alarm.type';
 import { Alarm } from '@core/alarm/domain/alarm';
 import { AlarmStatus } from '@core/alarm/domain/alarm-status';
+import { DeliveryStatus } from '@core/alarm/domain/delivery-status';
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, type Repository } from 'typeorm';
@@ -74,13 +76,43 @@ export class AlarmPersistenceAdapter implements AlarmPort {
     }
 
     /**
+     * 미확정 건이 남지 않은 발송을 완료로 넘긴다.
+     *
+     * 발송 건을 세는 쪽이 아니라 남은 건이 없는지를 보는 이유는,
+     * 통계 컬럼이 증가분으로 갱신되어 총합과 어긋날 수 있기 때문이다.
+     */
+    async completeFinished(): Promise<number> {
+        const result = await this.repo.query(
+            `
+            UPDATE alarms a
+            SET status = $1, finished_at = now(), updated_at = now()
+            WHERE a.status = $2
+              AND NOT EXISTS (
+                  SELECT 1 FROM alarm_deliveries d
+                  WHERE d.alarm_id = a.id AND d.status IN ($3, $4, $5)
+              )
+            RETURNING a.id
+            `,
+            [
+                AlarmStatus.COMPLETED,
+                AlarmStatus.SENDING,
+                DeliveryStatus.PENDING,
+                DeliveryStatus.IN_FLIGHT,
+                DeliveryStatus.UNKNOWN,
+            ],
+        );
+
+        return toRows<{ id: string }>(result).length;
+    }
+
+    /**
      * 적재할 알림을 선점한다.
      * SKIP LOCKED로 동시 조회를 막지만 잠금은 쿼리 종료와 함께 풀린다.
      * 적재가 진행되는 동안은 보호되지 않으므로,
      * 중복 적재는 create()의 ON CONFLICT DO NOTHING으로 방지한다.
      */
     async claimForPreparing(): Promise<Alarm | null> {
-        const rows: Partial<Alarm>[] = await this.repo.query(
+        const result = await this.repo.query(
             `
             UPDATE alarms
             SET updated_at = now()
@@ -91,11 +123,12 @@ export class AlarmPersistenceAdapter implements AlarmPort {
                 LIMIT 1
                 FOR UPDATE SKIP LOCKED
             )
-            RETURNING *
+            RETURNING id, body
             `,
             [AlarmStatus.PREPARING],
         );
 
-        return rows[0] ? this.repo.create(rows[0]) : null;
+        const row = toRows<{ id: string; body: string }>(result)[0];
+        return row ? this.repo.create(row) : null;
     }
 }

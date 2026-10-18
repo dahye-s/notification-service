@@ -31,4 +31,7 @@ export interface AlarmPort {
 
     /** 적재할 알림을 한 워커만 선점 */
     claimForPreparing(): Promise<Alarm | null>;
+
+    /** 미확정 건이 남지 않은 SENDING 알림을 COMPLETED로 전이한다. 전이된 알림 수를 돌려준다 */
+    completeFinished(): Promise<number>;
 }

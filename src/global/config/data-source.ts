@@ -17,7 +17,9 @@ export const dataSourceOptions: DataSourceOptions = {
 
     // 스키마 변경은 마이그레이션으로만 (운영 환경 가정)
     synchronize: false,
-    logging: process.env.NODE_ENV !== 'production',
+    // 전체 쿼리를 찍으면 대량 insert 파라미터에 터미널이 묻힌다
+    logging: ['error', 'warn'],
+    maxQueryExecutionTime: 1000,
 };
 
 export default new DataSource(dataSourceOptions);
