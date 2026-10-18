@@ -1,3 +1,4 @@
+import { toRows } from '@adapter/out/persistence/raw-rows';
 import type { DeliveryPort } from '@core/alarm/application/port/out/delivery.port';
 import type {
     ClaimedDelivery,
@@ -76,7 +77,7 @@ export class DeliveryPersistenceAdapter implements DeliveryPort {
      * prev_status를 남겨야 회수된 건(recovered)을 구분할 수 있다.
      */
     async claim(workerId: string, limit: number, leaseSec: number): Promise<ClaimedDelivery[]> {
-        const rows: DeliveryRow[] = await this.repo.query(
+        const result = await this.repo.query(
             `
             WITH picked AS (
                 SELECT d.id, d.status AS prev_status
@@ -114,7 +115,7 @@ export class DeliveryPersistenceAdapter implements DeliveryPort {
             ],
         );
 
-        return rows.map(toClaimedDelivery);
+        return toRows<DeliveryRow>(result).map(toClaimedDelivery);
     }
 
     /** lease를 잃은 워커의 뒤늦은 쓰기가 다른 워커의 결과를 덮어쓰지 않게 한다 */
@@ -134,6 +135,22 @@ export class DeliveryPersistenceAdapter implements DeliveryPort {
         return updated.affected === 1;
     }
 
+    /** lease가 이미 풀린 UNKNOWN 건은 토큰 대신 상태를 조건으로 걸어 확정한다 */
+    async settleUnknown(id: string, result: DeliveryResult): Promise<boolean> {
+        const updated = await this.repo.update(
+            { id, status: DeliveryStatus.UNKNOWN },
+            {
+                status: result.status,
+                messageId: result.messageId ?? null,
+                lastError: result.lastError ?? null,
+                ...(result.nextAttemptAt && { nextAttemptAt: result.nextAttemptAt }),
+                ...(result.status === DeliveryStatus.SENT && { sentAt: new Date() }),
+            },
+        );
+
+        return updated.affected === 1;
+    }
+
     /** 이미 요청이 나간 IN_FLIGHT는 회수할 수 없으므로 PENDING만 취소한다 */
     async cancel(alarmId: string): Promise<number> {
         const result = await this.repo.update(
@@ -145,7 +162,7 @@ export class DeliveryPersistenceAdapter implements DeliveryPort {
     }
 
     async find(status: DeliveryStatus, limit: number): Promise<ClaimedDelivery[]> {
-        const rows: DeliveryRow[] = await this.repo.query(
+        const result = await this.repo.query(
             `
             SELECT d.id, d.alarm_id, d.recipient_id, d.client_ref,
                    d.priority, d.attempts, d.lease_token, a.body,
@@ -159,7 +176,7 @@ export class DeliveryPersistenceAdapter implements DeliveryPort {
             [status, limit],
         );
 
-        return rows.map(toClaimedDelivery);
+        return toRows<DeliveryRow>(result).map(toClaimedDelivery);
     }
 
     async countByStatus(alarmId: string): Promise<DeliveryStats> {

@@ -18,5 +18,11 @@ export interface DeliveryPort {
 
     find(status: DeliveryStatus, limit: number): Promise<ClaimedDelivery[]>;
 
+    /**
+     * UNKNOWN 건을 확정한다.
+     * lease가 이미 풀린 상태라 토큰으로 검증할 수 없어 상태를 조건으로 건다.
+     */
+    settleUnknown(id: string, result: DeliveryResult): Promise<boolean>;
+
     countByStatus(alarmId: string): Promise<DeliveryStats>;
 }

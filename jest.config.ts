@@ -12,7 +12,8 @@ const config: Config = {
     rootDir: '.',
     testRegex: '.*\\.spec\\.ts$',
     transform: {
-        '^.+\\.(t|j)s$': 'ts-jest',
+        // 빌드 설정은 src만 내보내지만 테스트는 프로젝트 전체를 컴파일하므로 rootDir를 넓힌다
+        ['^.+\\.(t|j)s$']: ['ts-jest', { tsconfig: { rootDir: '.', declaration: false } }],
     },
     moduleNameMapper: {
         '^@core/(.*)$': '<rootDir>/src/core/$1',
