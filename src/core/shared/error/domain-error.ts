@@ -1,6 +1,6 @@
 /**
  * 코어는 HTTP를 모른다.
- * 어댑터 경계(예외 필터)에서 상태 코드로 변화한다.
+ * 어댑터 경계(예외 필터)에서 상태 코드로 변환한다.
  */
 export abstract class DomainError extends Error {
     abstract readonly code: string;

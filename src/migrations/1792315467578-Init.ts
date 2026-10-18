@@ -14,7 +14,7 @@ export class Init1792315467578 implements MigrationInterface {
             `CREATE TABLE "alarms" ("id" uuid NOT NULL DEFAULT gen_random_uuid(), "type" "public"."alarms_type_enum" NOT NULL DEFAULT 'NORMAL', "status" "public"."alarms_status_enum" NOT NULL DEFAULT 'CREATED', "title" character varying(200) NOT NULL, "body" text NOT NULL, "total_count" integer NOT NULL DEFAULT '0', "sent_count" integer NOT NULL DEFAULT '0', "failed_count" integer NOT NULL DEFAULT '0', "unknown_count" integer NOT NULL DEFAULT '0', "created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "updated_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "started_at" TIMESTAMP WITH TIME ZONE, "finished_at" TIMESTAMP WITH TIME ZONE, CONSTRAINT "PK_b776da486fb19d38b4f7777a6da" PRIMARY KEY ("id"))`,
         );
         await queryRunner.query(
-            `CREATE INDEX "idx_alarms_list" ON "alarms" ("status", "created_at" DESC)`,
+            `CREATE INDEX "idx_alarms_list" ON "alarms" ("status", "created_at")`,
         );
         await queryRunner.query(
             `CREATE TYPE "public"."alarm_deliveries_status_enum" AS ENUM('PENDING', 'IN_FLIGHT', 'SENT', 'FAILED', 'UNKNOWN', 'CANCELLED')`,
