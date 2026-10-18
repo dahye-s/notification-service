@@ -1,114 +1,341 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# 알림 발송 서비스
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+10만 명 규모의 알림을 **중복·누락 없이** 발송하는 서비스입니다. API와 발송 워커를 별도 프로세스로 분리해 운영합니다.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
-
-## Description
-
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
-
-## Project setup
+## 실행
 
 ```bash
-$ npm install
+docker compose up --build
 ```
 
-## Compile and run the project
+| 주소 | 설명 |
+| --- | --- |
+| http://localhost:3000/api/v1 | API |
+| http://localhost:3000/api/docs | Swagger (OpenAPI 3.0) |
+
+워커를 늘리려면 다음과 같이 실행합니다.
 
 ```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+docker compose up --scale worker=3
 ```
 
-## Run tests
+처리량 제한이 Redis에 전역으로 걸려 있어 워커 수를 늘려도 외부 API 한도를 넘지 않습니다. 각 워커는 `SKIP LOCKED`로 서로 다른 발송 건을 집어가므로 같은 수신자에게 두 번 보내지 않습니다.
+
+### 테스트
 
 ```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+npm test
 ```
 
-## Deployment
+## API
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+| 메서드 | 경로 | 응답 | 설명 |
+| --- | --- | --- | --- |
+| POST | `/api/v1/alarms` | 201 | 알림 생성 |
+| GET | `/api/v1/alarms` | 200 | 목록 조회 (상태·타입 필터, 페이지네이션) |
+| GET | `/api/v1/alarms/{id}` | 200 | 단건 조회 (진행률 포함) |
+| POST | `/api/v1/alarms/{id}/send` | 202 | 발송 시작 |
+| POST | `/api/v1/alarms/{id}/cancel` | 200 | 발송 취소 |
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+발송 시작이 **202 Accepted**인 이유는 응답 시점에 발송이 끝나지 않기 때문입니다. 10만 건은 외부 API 한도(50/s) 기준 최소 33분이 걸리므로, 요청은 접수만 받고 진행 상황은 단건 조회로 확인하도록 했습니다.
 
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+에러는 전역 필터에서 한 가지 형태로 내려갑니다. 코어는 HTTP를 모르고 도메인 예외만 던지며, 어댑터 경계에서 상태 코드로 변환합니다.
+
+```json
+{
+    "success": false,
+    "statusCode": 409,
+    "message": "Alarm cannot be sent in its current status",
+    "code": "ALARM_NOT_SENDABLE",
+    "details": { "currentStatus": "SENDING", "allowedStatus": ["CREATED"] }
+}
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+### 알림 종류
 
-## Observability
+| 종류 | 수신자 | 처리 |
+| --- | --- | --- |
+| `NORMAL` | 전체 사용자 | 워커가 외부 API를 커서로 순회하며 적재 |
+| `URGENT` | 요청에 지정 (최대 100명) | 적재 없이 바로 큐에 올리고 우선 발송 |
 
-In production applications, observability is essential for understanding how your system behaves, detecting issues early, and maintaining reliable performance.
+## 설계
 
-[NestJS Observe](https://observe.nestjs.com) automatically instruments your NestJS application, giving you deep visibility into your system with minimal setup:
+### 큐를 RDB에 둔 이유
 
-- **Distributed tracing:** Follow requests across services and understand how they flow through your system.
-- **Waterfall analysis:** Visualize request execution and identify slow operations, bottlenecks, and unexpected delays.
-- **Performance analysis:** Analyze application performance in real time and quickly pinpoint areas that need optimization.
-- **Metrics:** Track key application and infrastructure metrics to understand system health and performance trends.
-- **Logging:** Centralize and correlate logs with traces and other telemetry to make debugging easier.
-- **Error tracking:** Detect errors quickly and investigate their root causes with the surrounding context.
-- **SLA monitoring:** Track service-level objectives and identify when your application is approaching or exceeding defined thresholds.
-- **Alarms and alerts:** Set up alerts for critical errors, performance degradation, SLA violations, and other anomalies so your team can react quickly.
+발송 대상 10만 건을 어디에 쌓을지가 첫 결정이었습니다. 메시지 브로커(SQS·RabbitMQ)가 정석이지만, 여기서 지켜야 할 것은 **중복·누락 없음**과 **진행률 조회**입니다.
 
-## Resources
+| | 브로커 | RDB |
+| --- | --- | --- |
+| 진행률 | 결과를 DB에 따로 적재해야 함 | 같은 테이블에서 바로 집계 |
+| 정합성 | 브로커와 DB 사이에 어긋날 여지 | 큐와 상태가 한 트랜잭션 |
+| 인프라 | 추가 | 이미 있는 것 |
 
-Check out a few resources that may come in handy when working with NestJS:
+10만 건은 Postgres에게 작은 규모이고, 초당 50건이라는 외부 한도가 병목이라 처리량도 문제가 되지 않습니다.
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Auto-instrument your application with [NestJS Observer](https://observer.nestjs.com). Distributed tracing, metrics, and logging made easy. Error tracking and performance monitoring for your NestJS applications.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+### 중복을 막는 네 가지 장치
 
-## Support
+| 장치 | 막는 상황 |
+| --- | --- |
+| **`SKIP LOCKED`** | 여러 워커가 동시에 클레임 — 잠긴 행은 기다리지 않고 건너뛰어 서로 다른 행을 가져갑니다 |
+| **lease + fencing token** | 멈췄다 깨어난 워커의 뒤늦은 쓰기 — 클레임마다 `lease_token`을 새로 발급하고, 결과를 쓸 때 `WHERE id = ? AND lease_token = ?`로 검사합니다 |
+| **조건부 UPDATE** | 읽고 쓰는 사이에 상태가 바뀜 — 모든 변경이 `WHERE status IN (...)` 형태이고 `affected` 행 수로 성공을 판정합니다 |
+| **`ON CONFLICT DO NOTHING`** | 적재 중 워커가 죽어 재실행 — `(alarm_id, recipient_id)` 유니크 제약이 중복을 흡수합니다 |
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+### 타임아웃을 실패로 처리하지 않는 이유
 
-## Stay in touch
+발송 API는 일정 확률로 30초를 대기한 뒤 **발송을 수행합니다**. 5초에 끊긴 요청이 실제로는 나갔을 수 있다는 뜻이라, 선택지가 셋입니다.
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+| 처리 | 결과 |
+| --- | --- |
+| 재시도 | 이미 나간 건을 또 보내 **중복** |
+| `FAILED`로 기록 | 나간 건을 실패로 남겨 **통계가 어긋남** |
+| `UNKNOWN`으로 보류 | 재시도도 실패 처리도 하지 않고, 나중에 조회로 확정 |
 
-## License
+세 번째를 택했습니다. 확정은 `GET /v1/messages?clientRef=`로 합니다. `clientRef`가 `{alarmId}:{recipientId}` 형태라 재시도해도 변하지 않으므로, 기록 유무로 실제 발송 여부를 알 수 있습니다.
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+워커는 보낼 것이 없을 때 이 조회를 돌려 `UNKNOWN`을 정리합니다.
+
+| 조회 결과 | 처리 |
+| --- | --- |
+| 기록 있음 | `SENT`으로 확정 — 실제로 나갔으므로 재발송하지 않습니다 |
+| 기록 없음 | `PENDING`으로 되돌림 — 나가지 않았으므로 재발송해도 중복이 아닙니다 |
+| 조회 실패 | `UNKNOWN` 유지 — 다음 차례에 다시 시도합니다 |
+
+이 단계가 있어야 미확정 건이 0으로 수렴합니다. 조회 API에는 처리량 제한이 없어 복구 비용이 발송 한도를 쓰지 않습니다.
+
+### 처리량 제한
+
+외부 한도가 50/s이므로 45/s로 운영합니다. 제한을 **Redis에 두는 이유**는 워커를 늘려도 합산 한도가 유지되어야 하기 때문입니다. 워커별로 제한하면 `--scale worker=3`에서 135/s가 나가게 됩니다.
+
+Lua 스크립트로 처리하는 이유는 두 가지입니다.
+
+- **원자성** — `INCR` 직후 프로세스가 죽으면 TTL 없는 키가 남아 그 구간이 영구히 차단됩니다. `INCR`과 `PEXPIRE`를 함께 묶어야 합니다.
+- **시각 기준** — 윈도우 기준을 `redis.call('TIME')`으로 잡아야 워커 간 시계 편차가 영향을 주지 않습니다.
+
+창을 세는 방식도 바꿨습니다. 고정 윈도우는 경계에서 두 배가 몰립니다 — 0.9초에 45건, 1.1초에 45건이면 각 초 기준으로는 한도 안이지만 실제 1초 구간에는 90건이 나갑니다. 직전 창의 카운트를 경과 비율만큼 가중 합산하는 슬라이딩 윈도우 카운터로 막았습니다.
+
+429를 받으면 그 워커만 쉬는 것이 아니라 **전체가 멈춥니다**. 한 워커가 429를 받았다는 것은 전체 합이 한도를 넘었다는 뜻이고, 나머지가 계속 보내면 429가 이어지기 때문입니다.
+
+### 재시도
+
+| 응답 | 처리 |
+| --- | --- |
+| 2xx | `SENT` 확정 |
+| 4xx (429 제외) | `FAILED` 확정 — 같은 요청을 다시 보내도 결과가 같습니다 |
+| 429 | 전체 정지 후 재시도 |
+| 5xx | 지수 백오프 후 재시도 |
+| 타임아웃 | `UNKNOWN` — 조회로 확정 |
+
+백오프에는 full jitter를 적용했습니다. 지터가 없으면 동시에 실패한 건들이 같은 시각에 재시도되어 다시 몰리게 됩니다.
+
+재시도 횟수(`attempts`)와 워커 장애로 회수된 횟수(`recovery_count`)는 따로 셉니다. 워커를 재배포할 때마다 멀쩡한 건이 한도를 소진하면 안 되기 때문입니다.
+
+### 발송 동시성
+
+클레임한 건들을 고정 크기 동시성 풀로 흘려보냅니다. 한 건이 끝나면 즉시 다음 건을 투입하는 방식입니다.
+
+배치를 조각내어 `Promise.all`로 돌리면 조각마다 **가장 느린 응답을 기다리는 동안 아무것도 보내지 못합니다**. 타임아웃이 5초인데 조각에 그런 건이 하나만 섞여도 그 5초가 통째로 손실입니다. 실제로 이 구조에서 초당 9.7건까지 떨어졌습니다.
+
+동시성 상한을 두는 이유는 장애가 났을 때 결과를 모르는 건수를 묶어두기 위함입니다. 상한이 없으면 외부 서버가 멎었을 때 미확정 건이 무제한으로 늘어납니다.
+
+### 워커 루프
+
+한 워커가 하나의 루프에서 다섯 단계를 순서대로 시도하고, 할 일이 있으면 그 단계를 처리한 뒤 처음으로 돌아갑니다.
+
+```
+1. 적재할 알림이 있나?   → 수신자 10만 명 적재 후 SENDING으로 전이
+2. 발송할 건이 있나?     → 클레임 → 발송 → 통계 반영
+3. 미확정 건이 있나?     → clientRef 조회로 SENT/PENDING 확정
+4. 끝난 알림이 있나?     → 남은 건이 없으면 COMPLETED로 전이
+5. 아무것도 없으면 대기
+```
+
+앞 단계가 더 급한 일이라 이 순서입니다. 별도 스케줄러를 두면 발송과 복구가 동시에 돌아 서로의 처리량을 깎기 때문에, 한 루프 안에서 우선순위로 해결했습니다.
+
+완료 판정은 통계 컬럼의 합이 아니라 **미확정 건이 남아 있는지**로 합니다. 통계는 증가분으로 갱신되어 총합과 어긋날 수 있기 때문입니다.
+
+### 워커 종료
+
+SIGTERM을 받으면 새 클레임을 멈추고 진행 중인 발송만 마무리합니다. 끝내지 못한 건은 lease가 만료되면 다른 워커가 회수합니다. 회수된 건은 이전 워커가 이미 보냈을 수 있으므로 재발송하지 않고 `UNKNOWN`으로 둡니다.
+
+## 구조
+
+헥사고날 아키텍처를 택했습니다. 외부 의존이 발송 API·사용자 API·Redis 세 개인데, 포트로 끊어 두면 코어를 실제 DB나 외부 서버 없이 검증할 수 있고 발송 채널이 바뀌어도 어댑터만 교체하면 됩니다.
+
+```
+src/
+├── core/                      외부를 모르는 영역
+│   └── alarm/
+│       ├── domain/            상태 전이·정책·재시도 규칙 (순수 함수)
+│       └── application/
+│           ├── port/in        유스케이스 인터페이스
+│           ├── port/out       외부 의존 인터페이스
+│           └── service        유스케이스 구현
+├── adapter/
+│   ├── in/web                 REST 컨트롤러
+│   ├── in/worker              발송 워커
+│   └── out/                   영속성·발송·사용자·처리량 제한 구현
+└── global/                    설정·공통 응답·예외 필터
+```
+
+워커는 세 컴포넌트로 나눴습니다. `DispatchWorker`는 루프만 돌고, 적재는 `RecipientLoader`, 발송은 `DeliveryDispatcher`, 집계는 `StatsCollector`가 맡습니다.
+
+### 테이블
+
+**alarms** — 알림 단위입니다. 진행률을 매번 집계하지 않도록 통계 컬럼을 증가분으로 갱신합니다.
+
+| 컬럼 | 타입 | 설명 |
+| --- | --- | --- |
+| `id` | uuid | PK |
+| `type` | enum | `NORMAL` / `URGENT` |
+| `status` | enum | `CREATED` → `PREPARING` → `SENDING` → `COMPLETED` / `CANCELLED` |
+| `title` | varchar(200) | |
+| `body` | text | 발송 본문 |
+| `total_count` | int | 적재된 수신자 수 |
+| `sent_count` | int | 발송 확정 |
+| `failed_count` | int | 영구 실패 |
+| `unknown_count` | int | 발송 여부 미확정 |
+| `created_at` / `updated_at` | timestamptz | |
+| `started_at` / `finished_at` | timestamptz | 발송 시작·종료 시각 |
+
+**alarm_deliveries** — 수신자 1명당 1행입니다. 알림당 최대 10만 행이라 `alarms`와 관계를 두지 않고 `alarm_id`로만 참조합니다.
+
+| 컬럼 | 타입 | 설명 |
+| --- | --- | --- |
+| `id` | bigserial | PK |
+| `alarm_id` | uuid | FK (`ON DELETE CASCADE`) |
+| `recipient_id` | varchar(64) | 수신자 ID |
+| `status` | enum | `PENDING` / `IN_FLIGHT` / `SENT` / `FAILED` / `UNKNOWN` / `CANCELLED` |
+| `priority` | smallint | `URGENT`=0, `NORMAL`=1 — 클레임 정렬 키 |
+| `attempts` | smallint | 실제 발송 요청 횟수 — 재시도 한도 판단 |
+| `recovery_count` | smallint | lease 만료로 회수된 횟수 — 재시도 한도에 포함하지 않습니다 |
+| `next_attempt_at` | timestamptz | 이 시각 이후 클레임 가능. `PENDING`이면 재시도 예약, `IN_FLIGHT`면 lease 만료 |
+| `locked_by` | varchar(64) | 점유한 워커 ID |
+| `lease_token` | uuid | 점유마다 재발급. 결과 기록 시 점유권 검증(fencing) |
+| `client_ref` | varchar(128) | `{alarmId}:{recipientId}` — 재시도해도 불변 |
+| `message_id` | varchar(64) | 발송 API가 발급한 ID |
+| `last_error` | varchar(500) | 마지막 실패 사유 |
+| `sent_at` | timestamptz | 발송 확정 시각 |
+| `created_at` / `updated_at` | timestamptz | |
+
+제약은 `UNIQUE (alarm_id, recipient_id)` 하나입니다. 적재 도중 워커가 죽어 재실행되어도 이 제약이 중복을 흡수합니다.
+
+`attempts`와 `recovery_count`를 나눈 이유는, 워커가 죽어서 회수된 것과 외부 서버가 실패를 돌려준 것이 성격이 다르기 때문입니다. 전자를 재시도 한도에 넣으면 워커를 재배포할 때마다 멀쩡한 건이 영구 실패로 떨어집니다.
+
+인덱스는 세 개입니다.
+
+| 인덱스 | 용도 |
+| --- | --- |
+| `idx_deliveries_claim` (부분) | 워커 클레임 — `PENDING`/`IN_FLIGHT`만 색인해 완료 건이 쌓여도 크기가 늘지 않습니다 |
+| `idx_deliveries_stats` | 진행률 집계 |
+| `idx_deliveries_client_ref` | UNKNOWN 확정 조회 |
+
+### 로우 쿼리를 쓴 곳
+
+클레임 쿼리만 로우 SQL입니다. `FOR UPDATE SKIP LOCKED`가 포함된 CTE를 ORM으로 표현하면 오히려 읽기 어렵고, 이 쿼리의 정확성이 중복 방지의 핵심이라 SQL을 그대로 두는 편이 검증하기 쉽다고 판단했습니다.
+
+## 테스트
+
+중복·누락 없음을 좌우하는 순수 함수를 단위 테스트했습니다. 26개이며 외부 서버나 컨테이너 없이 실행됩니다.
+
+| 대상 | 검증 |
+| --- | --- |
+| `canTransitionAlarm` | 상태 전이 규칙, 종료 상태 불변 |
+| `validateRecipients` | 긴급 100명 상한, 일반은 수신자 지정 불가 |
+| `classifySendResponse` | HTTP 응답 분류, 타임아웃이 실패로 새지 않을 것 |
+| `calculateBackoffMs` | 지수 증가, 상한 클램프, 지터 범위 |
+
+## 실측
+
+워커 3개(`--scale worker=3`)로 10만 건을 전량 발송하고 30초 간격으로 진행률을 기록했습니다. 측정 방법과 구간별 데이터는 [docs/measurement.md](docs/measurement.md)에 있습니다.
+
+### 중복·누락 없음
+
+| 항목 | 값 |
+| --- | --- |
+| 대상 | 100,000 |
+| `sent` | 99,001 |
+| `failed` | 999 |
+| `unknown` | 0 |
+
+`sent + failed`가 총 대상과 정확히 일치합니다. 중복이 있었다면 합이 넘고, 누락이 있었다면 모자랍니다.
+
+`failed` 999건은 발송 API의 차단 수신자 수와 같습니다. 차단은 항상 400이라 재시도 대상이 아니고, 이 숫자가 어긋났다면 5xx나 타임아웃이 실패로 새어 들어갔다는 뜻입니다. 재시도가 발생한 건은 5,060건(5.1%)으로 외부 API의 5xx 비율과 일치했고, lease 만료로 회수된 건은 0건이었습니다.
+
+### 미확정 건의 수렴
+
+`unknown`은 발송 중 최대 2,056건까지 쌓였다가 전부 확정되어 0이 되었습니다. 발송이 끝난 뒤 확정에 약 16분이 걸렸습니다. 워커 루프가 보낼 것이 없을 때만 조회를 돌리므로 이 구간이 꼬리로 남습니다.
+
+완료 판정을 통계 합이 아니라 **미확정 건 유무**로 둔 이유가 여기서 드러납니다. `pending`이 0이 된 시점에도 아직 2,000건 넘게 발송 여부를 모르는 상태였고, 그때 완료로 넘겼다면 그 건들은 영구히 미확정으로 남습니다.
+
+### 처리량
+
+안정 구간에서 26~27.6/s가 나왔습니다. 설정 한도 45/s의 60% 수준입니다.
+
+원인은 처리량 제한도 동시성 상한도 아니라 **클레임 배치의 경계**였습니다. 동시 발송 건수가 7과 76 사이를 오갔는데, 한 배치를 클레임해 한꺼번에 투입하고 그 배치가 끝날 때까지 다음 클레임을 하지 않기 때문입니다. 배치에 타임아웃(5초) 건이 하나만 섞여도 나머지가 끝난 뒤 그 한 건을 기다리는 동안 슬롯이 비어 있게 됩니다. 후보를 배제한 과정은 [docs/measurement.md](docs/measurement.md#처리량이-한도의-60에-머문-이유)에 적었습니다.
+
+워커를 늘리는 것은 답이 아닙니다. 각 워커가 자기 배치의 꼬리를 기다리므로 워커를 늘리면 유휴 구간도 함께 복제됩니다.
+
+### 적재 중복
+
+워커 3개가 같은 알림을 동시에 선점해 각각 10만 건을 적재하려 했습니다. `claimForPreparing`의 `SKIP LOCKED` 잠금이 쿼리 종료와 함께 풀리기 때문입니다.
+
+데이터는 어긋나지 않았습니다. 행 중복은 `ON CONFLICT DO NOTHING`이 흡수하고, `total_count`는 증가분이 아니라 절대값으로 덮어쓰며, `PREPARING → SENDING` 전이가 조건부라 먼저 끝낸 워커만 통과합니다. `total_count`는 정확히 100,000이었습니다.
+
+손실은 사용자 조회 API를 200회 더 호출한 것뿐입니다. 다만 워커를 늘릴수록 낭비가 비례해 늘어나므로 적재 구간에도 lease를 적용하는 것이 맞습니다.
+
+## 기술 선택
+
+| 선택 | 이유 |
+| --- | --- |
+| Postgres | `FOR UPDATE SKIP LOCKED`로 큐와 상태를 한 트랜잭션에 둘 수 있습니다 |
+| Redis | 워커 수와 무관한 전역 처리량 제한. Lua로 원자적 처리 |
+| TypeORM | 마이그레이션 기반 스키마 관리. 클레임 쿼리만 로우 SQL로 내려갑니다 |
+| CommonJS | TypeORM·NestJS 데코레이터 생태계가 CJS 기준으로 안정적입니다 |
+
+## 작업하며 고민한 것
+
+### 레이어드 vs 헥사고날
+
+- **고민** — 파일 다섯 개짜리 API에 포트·어댑터를 깔면 오버엔지니어링이 아닌가
+- **결정** — 헥사고날
+- **이유** — 발송 경로 전체가 외부 의존(발송 API·사용자 API·Redis) 위에 서 있고, 이 셋의 응답을 어떻게 해석하느냐가 중복·누락을 가릅니다
+- **효과** — 응답 분류와 상태 전이 규칙을 외부 서버 없이 단위 테스트할 수 있습니다. 레이어드였다면 이 로직이 서비스 안에서 HTTP 클라이언트와 뒤섞여 있었을 것입니다
+
+### 발송 상태: RDB vs Redis
+
+- **고민** — 재시도 시각, 점유 워커, lease 토큰은 일회성 정보라 Redis가 어울려 보였습니다
+- **결정** — 전부 RDB
+- **이유** — 클레임은 "상태를 IN_FLIGHT로 바꾸면서 동시에 점유자를 기록"하는 한 번의 쓰기입니다. Postgres와 Redis로 나누면 그 사이에 프로세스가 죽었을 때 둘이 어긋나고, 상태는 IN_FLIGHT인데 점유자가 없으면 누가 회수할지 알 수 없습니다
+- **Redis의 몫** — 워커 간에 공유해야 하지만 잃어버려도 되는 것, 즉 처리량 제한 카운터만 맡깁니다. 날아가도 잠깐 한도를 넘을 뿐 데이터가 깨지지 않습니다
+
+### 타임아웃: 재시도 vs 보류
+
+- **처음** — 타임아웃을 5xx와 같이 묶어 재시도
+- **문제** — 발송 API는 타임아웃된 요청도 30초 뒤에 실제로 발송합니다. 재시도하면 그대로 중복입니다
+- **결정** — `UNKNOWN` 상태를 따로 두고 보류. `FAILED`로 돌려도 나간 건을 실패로 남기게 되므로, 재시도도 실패 처리도 하지 않습니다
+- **확정 방법** — `clientRef`로 발송 내역을 조회합니다. 이 값을 `{alarmId}:{recipientId}`로 잡아 재시도해도 변하지 않게 한 것도 이때 결정했습니다
+
+### 발송 동시성: 배치 vs 풀
+
+- **처음** — 클레임한 건을 조각내어 `Promise.all`로 발송
+- **문제** — 10만 건을 돌려 보니 한도의 1/5 수준이 나왔습니다. 조각마다 가장 느린 응답(타임아웃 5초)을 기다리느라 그 시간 내내 아무것도 보내지 않고 있었습니다
+- **결정** — 한 건이 끝나면 바로 다음 건을 투입하는 고정 동시성 풀
+- **배운 것** — 동시성 상한만 맞으면 처리량도 따라올 줄 알았는데, 실제 병목은 **배치 경계에서 노는 시간**이었습니다. 다만 경계가 조각 단위에서 클레임 단위로 옮겨간 것이지 사라지지는 않았습니다 (위 [실측](#실측) 참고)
+
+### 처리량 제한: 고정 윈도우 vs 슬라이딩 윈도우
+
+- **처음** — 초 단위로 카운터를 올리는 고정 윈도우
+- **문제** — 10만 건을 실제로 돌려 보니 429가 떴습니다. 1초대의 끝자락과 2초대의 첫머리에 몰리면 각 초 기준으로는 한도 안이지만 실제 1초 구간에는 두 배가 나갑니다
+- **결정** — 직전 창의 카운트를 경과 비율만큼 가중 합산하는 슬라이딩 윈도우 카운터
+- **배운 것** — 설계 단계에서는 보이지 않다가 전체 물량을 돌려 보고서야 드러난 문제였습니다
+
+## 이후 추가하고 싶은 것
+
+| 항목 | 내용 |
+| --- | --- |
+| **통합&nbsp;테스트** | 동시 클레임과 lease 회수는 실제 Postgres가 있어야 검증됩니다. Testcontainers로 워커 두 개를 띄워 같은 건을 두 번 집지 않는지, 한쪽을 죽였을 때 다른 쪽이 회수하는지 확인하려 합니다 |
+| **적재&nbsp;속도** | 10만 건 적재에 25초가 걸립니다. 사용자 조회와 적재를 파이프라인으로 겹치면 절반으로 줄일 수 있습니다. 전체 발송 시간에 비하면 작아 우선순위를 낮게 두었습니다 |
+| **성능&nbsp;개선** | 실측이 한도의 60%에 머물렀습니다. 클레임과 발송을 분리해 빈 슬롯이 생기는 대로 다음 건을 채우면 한도에 근접할 것으로 봅니다. `CLAIM_BATCH_SIZE`가 `MAX_IN_FLIGHT`보다 작으면 동시성 풀이 배치 단위 `Promise.all`과 같아지는 것도 같이 고쳐야 합니다 |
+| **적재&nbsp;lease** | 워커 여러 개가 같은 알림을 동시에 적재 선점할 수 있습니다. 데이터는 `ON CONFLICT`가 막지만 사용자 조회 API 호출이 워커 수만큼 늘어납니다 |
+| **관측** | 지금은 로그뿐입니다. 초당 처리량, 상태별 건수, 재시도 분포를 메트릭으로 내보내면 운영 중에 어디가 막혔는지 바로 확인할 수 있습니다 |
