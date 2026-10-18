@@ -13,7 +13,7 @@ export interface MessageRecord {
 
 /**
  * 발송 결과를 처리 방식별로 분류한 것.
- * 어댑터가 HTTP 응답을 이 타입으로 변환하고 코어는 이걸 보도 다음 동작을 결정한다.
+ * 어댑터가 HTTP 응답을 이 타입으로 변환하고 코어는 이걸 보고 다음 동작을 결정한다.
  */
 export enum SendResultType {
     /** 202 — 발송 확정 */

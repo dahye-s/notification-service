@@ -28,34 +28,39 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
         // 1. 도메인 규칙 위반 — 의도된 실패
         if (exception instanceof DomainError) {
-            const status = STATUS_BY_CODE[exception.code] ?? HttpStatus.BAD_REQUEST;
-            res.status(status).json({
-                error: {
-                    code: exception.code,
-                    message: exception.message,
-                    details: exception.details,
-                },
+            const statusCode = STATUS_BY_CODE[exception.code] ?? HttpStatus.BAD_REQUEST;
+
+            res.status(statusCode).json({
+                success: false,
+                statusCode,
+                message: exception.message,
+                error: { code: exception.code, details: exception.details },
             });
             return;
         }
 
         // 2. DTO 검증 실패 등 NestJS 예외
         if (exception instanceof HttpException) {
+            const statusCode = exception.getStatus();
             const body = exception.getResponse() as Record<string, unknown>;
-            res.status(exception.getStatus()).json({
-                error: {
-                    code: 'VALIDATION_FAILED',
-                    message: 'Request validation failed',
-                    details: body.message ?? body,
-                },
+
+            res.status(statusCode).json({
+                success: false,
+                statusCode,
+                message: 'Request validation failed',
+                error: { code: 'VALIDATION_FAILED', details: body.message ?? body },
             });
             return;
         }
 
-        // 3. 예상하지 못한 오류 — 버그 가능성이 있으므로 스택을 남긴다
+        // 3. 예상하지 못한 오류 — 버그 가능성이 있으므로 스택을 남기고 상세는 감춘다
         this.logger.error(exception);
+
         res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
-            error: { code: 'INTERNAL_ERROR', message: 'Internal server error' },
+            success: false,
+            statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
+            message: 'Internal server error',
+            error: { code: 'INTERNAL_ERROR' },
         });
     }
 }
